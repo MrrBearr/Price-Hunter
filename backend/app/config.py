@@ -1,13 +1,14 @@
 from pydantic_settings import BaseSettings
 from functools import lru_cache
+from typing import Optional
 
 
 class Settings(BaseSettings):
     # Database
     database_url: str = "postgresql://pricehunter:pricehunter_secret_2024@db:5432/pricehunter"
 
-    # Redis
-    redis_url: str = "redis://redis:6379/0"
+    # Redis (optional for Vercel deployment)
+    redis_url: Optional[str] = ""
 
     # Auth
     secret_key: str = "super-secret-key-change-in-production"
@@ -16,7 +17,7 @@ class Settings(BaseSettings):
 
     # App
     app_name: str = "PriceHunter"
-    debug: bool = True
+    debug: bool = False
 
     class Config:
         env_file = ".env"

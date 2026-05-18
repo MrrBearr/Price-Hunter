@@ -9,6 +9,7 @@ from app.models.offer import Offer
 from app.models.store import Store
 from app.schemas.product import ProductResponse
 from app.services.redis_service import RedisService
+from app.services.search_service import search_and_save
 
 router = APIRouter()
 
@@ -52,6 +53,26 @@ async def search_products(
     query = query.offset((page - 1) * per_page).limit(per_page)
     result = await db.execute(query)
     products = result.scalars().all()
+
+    # If no results in DB, search external APIs and save
+    if not products and page == 1:
+        await search_and_save(q, db)
+        await db.commit()
+        # Re-query after saving
+        re_query = select(Product).where(
+            or_(
+                Product.name.ilike(f"%{q}%"),
+                Product.brand.ilike(f"%{q}%"),
+                Product.category.ilike(f"%{q}%"),
+            )
+        )
+        if sort_by == "name":
+            re_query = re_query.order_by(Product.name.asc())
+        else:
+            re_query = re_query.order_by(Product.created_at.desc())
+        re_query = re_query.limit(per_page)
+        result = await db.execute(re_query)
+        products = result.scalars().all()
 
     response = []
     for product in products:
@@ -105,9 +126,15 @@ async def trigger_search(
     q: str = Query(..., min_length=2),
     db: AsyncSession = Depends(get_db),
 ):
-    """Trigger a scraping job for the search query."""
+    """Trigger a search - on serverless, does direct HTTP search. With Redis, queues scraping."""
+    # Try to queue to Redis (Docker mode)
     await RedisService.publish_task("scraping_queue", {
         "query": q,
         "stores": ["amazon", "mercadolivre", "shopee"],
     })
+
+    # Also do direct search (Vercel/serverless mode)
+    await search_and_save(q, db)
+    await db.commit()
+
     return {"message": "Search triggered", "query": q}
