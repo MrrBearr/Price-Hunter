@@ -1,9 +1,30 @@
+import logging
+from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.config import get_settings
+from app.database import engine, Base
 from app.routers import auth, products, offers, coupons, alerts, favorites, search
 
+# Import all models so they are registered with Base
+from app.models import User, Product, Store, Offer, Coupon, CouponTest, Favorite, Alert, PriceHistory, Log
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
 settings = get_settings()
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Create tables on startup if they don't exist."""
+    logger.info("Starting PriceHunter API...")
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    logger.info("Database tables ensured.")
+    yield
+    logger.info("Shutting down PriceHunter API...")
+
 
 app = FastAPI(
     title=settings.app_name,
@@ -11,12 +32,13 @@ app = FastAPI(
     version="1.0.0",
     docs_url="/docs",
     redoc_url="/redoc",
+    lifespan=lifespan,
 )
 
 # CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://frontend:3000", "*"],
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

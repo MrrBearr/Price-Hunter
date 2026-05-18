@@ -1,3 +1,4 @@
+import logging
 from typing import List, Optional
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -6,12 +7,12 @@ from sqlalchemy import select, func, or_
 from app.database import get_db
 from app.models.product import Product
 from app.models.offer import Offer
-from app.models.store import Store
 from app.schemas.product import ProductResponse
 from app.services.redis_service import RedisService
 from app.services.search_service import search_and_save
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 @router.get("/", response_model=List[ProductResponse])
@@ -26,57 +27,28 @@ async def search_products(
     per_page: int = Query(20, ge=1, le=100),
     db: AsyncSession = Depends(get_db),
 ):
-    # Check cache
+    logger.info(f"Search request: q={q}, sort_by={sort_by}, page={page}")
+
+    # Check cache first
     cache_key = f"search:{q}:{category}:{min_price}:{max_price}:{store}:{sort_by}:{page}"
     cached = await RedisService.cache_get(cache_key)
     if cached:
         return cached
 
-    # Build query
-    query = select(Product).where(
-        or_(
-            Product.name.ilike(f"%{q}%"),
-            Product.brand.ilike(f"%{q}%"),
-            Product.category.ilike(f"%{q}%"),
-        )
-    )
+    # Search in database
+    products = await _query_products(db, q, category, sort_by, page, per_page)
 
-    if category:
-        query = query.where(Product.category == category)
-
-    # Sort
-    if sort_by == "name":
-        query = query.order_by(Product.name.asc())
-    else:
-        query = query.order_by(Product.created_at.desc())
-
-    query = query.offset((page - 1) * per_page).limit(per_page)
-    result = await db.execute(query)
-    products = result.scalars().all()
-
-    # If no results in DB, search external APIs and save
+    # If no results, fetch from external APIs and save
     if not products and page == 1:
+        logger.info(f"No results in DB, fetching from external APIs for: {q}")
         await search_and_save(q, db)
-        await db.commit()
         # Re-query after saving
-        re_query = select(Product).where(
-            or_(
-                Product.name.ilike(f"%{q}%"),
-                Product.brand.ilike(f"%{q}%"),
-                Product.category.ilike(f"%{q}%"),
-            )
-        )
-        if sort_by == "name":
-            re_query = re_query.order_by(Product.name.asc())
-        else:
-            re_query = re_query.order_by(Product.created_at.desc())
-        re_query = re_query.limit(per_page)
-        result = await db.execute(re_query)
-        products = result.scalars().all()
+        products = await _query_products(db, q, category, sort_by, page, per_page)
+        logger.info(f"After external fetch, found {len(products)} products")
 
+    # Build response with offer stats
     response = []
     for product in products:
-        # Get offers data
         offers_query = select(
             func.count(Offer.id),
             func.min(Offer.price),
@@ -91,9 +63,8 @@ async def search_products(
         offers_result = await db.execute(offers_query)
         stats = offers_result.one()
 
-        if min_price or max_price:
-            if stats[0] == 0:
-                continue
+        if (min_price or max_price) and stats[0] == 0:
+            continue
 
         response.append(ProductResponse(
             id=product.id,
@@ -115,10 +86,44 @@ async def search_products(
     elif sort_by == "price_desc":
         response.sort(key=lambda x: x.min_price or 0, reverse=True)
 
-    # Cache results for 5 minutes
-    await RedisService.cache_set(cache_key, [r.model_dump(mode="json") for r in response], expire=300)
+    # Cache for 5 minutes
+    if response:
+        await RedisService.cache_set(
+            cache_key,
+            [r.model_dump(mode="json") for r in response],
+            expire=300,
+        )
 
     return response
+
+
+async def _query_products(
+    db: AsyncSession,
+    q: str,
+    category: Optional[str],
+    sort_by: str,
+    page: int,
+    per_page: int,
+) -> List[Product]:
+    """Query products from database."""
+    query = select(Product).where(
+        or_(
+            Product.name.ilike(f"%{q}%"),
+            Product.category.ilike(f"%{q}%"),
+        )
+    )
+
+    if category:
+        query = query.where(Product.category == category)
+
+    if sort_by == "name":
+        query = query.order_by(Product.name.asc())
+    else:
+        query = query.order_by(Product.created_at.desc())
+
+    query = query.offset((page - 1) * per_page).limit(per_page)
+    result = await db.execute(query)
+    return list(result.scalars().all())
 
 
 @router.post("/trigger")
@@ -126,15 +131,14 @@ async def trigger_search(
     q: str = Query(..., min_length=2),
     db: AsyncSession = Depends(get_db),
 ):
-    """Trigger a search - on serverless, does direct HTTP search. With Redis, queues scraping."""
-    # Try to queue to Redis (Docker mode)
+    """Trigger a search - does direct HTTP search and optionally queues to Redis."""
+    # Queue to Redis if available (Docker mode)
     await RedisService.publish_task("scraping_queue", {
         "query": q,
         "stores": ["amazon", "mercadolivre", "shopee"],
     })
 
-    # Also do direct search (Vercel/serverless mode)
+    # Direct search (Vercel/serverless mode)
     await search_and_save(q, db)
-    await db.commit()
 
-    return {"message": "Search triggered", "query": q}
+    return {"message": "Search triggered and completed", "query": q}
