@@ -3,7 +3,6 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.config import get_settings
-from app.database import engine, Base
 from app.routers import auth, products, offers, coupons, alerts, favorites, search
 
 # Import all models so they are registered with Base
@@ -17,11 +16,13 @@ settings = get_settings()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Create tables on startup if they don't exist."""
+    """Create tables on startup if database is available."""
     logger.info("Starting PriceHunter API...")
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-    logger.info("Database tables ensured.")
+    try:
+        from app.database import init_db
+        await init_db()
+    except Exception as e:
+        logger.warning(f"Database init skipped: {e}")
     yield
     logger.info("Shutting down PriceHunter API...")
 

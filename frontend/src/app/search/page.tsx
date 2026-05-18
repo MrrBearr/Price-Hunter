@@ -5,7 +5,7 @@ import { useSearchParams } from 'next/navigation';
 import { searchAPI } from '@/lib/api';
 import { Product } from '@/types';
 import ProductCard from '@/components/ProductCard';
-import { Filter, SortAsc, Loader2 } from 'lucide-react';
+import { Filter, Loader2 } from 'lucide-react';
 
 export default function SearchPage() {
   const searchParams = useSearchParams();
@@ -15,7 +15,6 @@ export default function SearchPage() {
   const [sortBy, setSortBy] = useState('relevance');
   const [minPrice, setMinPrice] = useState('');
   const [maxPrice, setMaxPrice] = useState('');
-  const [triggered, setTriggered] = useState(false);
 
   useEffect(() => {
     if (query) {
@@ -31,15 +30,10 @@ export default function SearchPage() {
       if (maxPrice) params.max_price = parseFloat(maxPrice);
 
       const response = await searchAPI.search(params);
-      setProducts(response.data);
-
-      // If no results, trigger scraping
-      if (response.data.length === 0 && !triggered) {
-        setTriggered(true);
-        await searchAPI.trigger(query);
-      }
+      setProducts(response.data || []);
     } catch (error) {
       console.error('Search failed:', error);
+      setProducts([]);
     } finally {
       setLoading(false);
     }
@@ -53,7 +47,7 @@ export default function SearchPage() {
           Resultados para &ldquo;{query}&rdquo;
         </h1>
         <p className="text-gray-400">
-          {loading ? 'Buscando...' : `${products.length} produtos encontrados`}
+          {loading ? 'Buscando nas lojas...' : `${products.length} produtos encontrados`}
         </p>
       </div>
 
@@ -99,16 +93,14 @@ export default function SearchPage() {
       {loading ? (
         <div className="flex flex-col items-center justify-center py-20">
           <Loader2 className="w-12 h-12 text-primary-500 animate-spin mb-4" />
-          <p className="text-gray-400">Buscando melhores precos...</p>
+          <p className="text-gray-400">Buscando melhores precos nas lojas...</p>
         </div>
       ) : products.length === 0 ? (
         <div className="text-center py-20">
           <p className="text-xl text-gray-400 mb-4">Nenhum resultado encontrado</p>
-          {triggered && (
-            <p className="text-sm text-gray-500">
-              Estamos buscando nas lojas. Tente novamente em alguns instantes.
-            </p>
-          )}
+          <p className="text-sm text-gray-500">
+            Tente buscar com palavras diferentes.
+          </p>
         </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">

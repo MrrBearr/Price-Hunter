@@ -1,7 +1,10 @@
+import logging
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy.orm import DeclarativeBase
+from sqlalchemy.pool import NullPool
 from app.config import get_settings
 
+logger = logging.getLogger(__name__)
 settings = get_settings()
 
 # Convert postgresql:// to postgresql+asyncpg://
@@ -11,13 +14,11 @@ if database_url.startswith("postgres://"):
 elif database_url.startswith("postgresql://"):
     database_url = database_url.replace("postgresql://", "postgresql+asyncpg://", 1)
 
+# Use NullPool for serverless (Vercel) compatibility
 engine = create_async_engine(
     database_url,
-    echo=settings.debug,
-    pool_size=5,
-    max_overflow=5,
-    pool_pre_ping=True,
-    pool_recycle=300,
+    echo=False,
+    poolclass=NullPool,
 )
 
 AsyncSessionLocal = async_sessionmaker(
@@ -38,3 +39,13 @@ async def get_db() -> AsyncSession:
         except Exception:
             await session.rollback()
             raise
+
+
+async def init_db():
+    """Create all tables if they don't exist."""
+    try:
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+        logger.info("Database tables created/verified")
+    except Exception as e:
+        logger.error(f"Failed to init database: {e}")
