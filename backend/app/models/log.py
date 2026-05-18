@@ -12,5 +12,5 @@ class Log(Base):
     level = Column(String(20), nullable=False, default="info")
     source = Column(String(100), nullable=False)
     message = Column(Text, nullable=False)
-    metadata = Column(JSONB)
+    meta_data = Column("metadata", JSONB)
     created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
