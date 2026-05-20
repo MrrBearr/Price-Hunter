@@ -1,12 +1,7 @@
 import logging
 from typing import List, Optional
-from fastapi import APIRouter, Depends, Query, Response
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func, or_
+from fastapi import APIRouter, Query
 
-from app.database import get_db
-from app.models.product import Product
-from app.models.offer import Offer
 from app.services.search_service import search_mercadolivre_direct
 
 router = APIRouter()

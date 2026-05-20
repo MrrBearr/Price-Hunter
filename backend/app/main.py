@@ -1,31 +1,12 @@
 import logging
-from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.config import get_settings
-from app.routers import auth, products, offers, coupons, alerts, favorites, search
-
-# Import all models so they are registered with Base
-from app.models import User, Product, Store, Offer, Coupon, CouponTest, Favorite, Alert, PriceHistory, Log
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 settings = get_settings()
-
-
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    """Create tables on startup if database is available."""
-    logger.info("Starting PriceHunter API...")
-    try:
-        from app.database import init_db
-        await init_db()
-    except Exception as e:
-        logger.warning(f"Database init skipped: {e}")
-    yield
-    logger.info("Shutting down PriceHunter API...")
-
 
 app = FastAPI(
     title=settings.app_name,
@@ -33,7 +14,6 @@ app = FastAPI(
     version="1.0.0",
     docs_url="/docs",
     redoc_url="/redoc",
-    lifespan=lifespan,
 )
 
 # CORS
@@ -45,14 +25,28 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Routers
-app.include_router(auth.router, prefix="/api/auth", tags=["Authentication"])
-app.include_router(products.router, prefix="/api/products", tags=["Products"])
-app.include_router(offers.router, prefix="/api/offers", tags=["Offers"])
-app.include_router(coupons.router, prefix="/api/coupons", tags=["Coupons"])
-app.include_router(alerts.router, prefix="/api/alerts", tags=["Alerts"])
-app.include_router(favorites.router, prefix="/api/favorites", tags=["Favorites"])
-app.include_router(search.router, prefix="/api/search", tags=["Search"])
+# Search router - NO database dependency, always works
+from app.routers.search import router as search_router
+app.include_router(search_router, prefix="/api/search", tags=["Search"])
+
+# DB-dependent routers - load only if database modules are available
+try:
+    from app.routers.auth import router as auth_router
+    from app.routers.products import router as products_router
+    from app.routers.offers import router as offers_router
+    from app.routers.coupons import router as coupons_router
+    from app.routers.alerts import router as alerts_router
+    from app.routers.favorites import router as favorites_router
+
+    app.include_router(auth_router, prefix="/api/auth", tags=["Authentication"])
+    app.include_router(products_router, prefix="/api/products", tags=["Products"])
+    app.include_router(offers_router, prefix="/api/offers", tags=["Offers"])
+    app.include_router(coupons_router, prefix="/api/coupons", tags=["Coupons"])
+    app.include_router(alerts_router, prefix="/api/alerts", tags=["Alerts"])
+    app.include_router(favorites_router, prefix="/api/favorites", tags=["Favorites"])
+    logger.info("All routers loaded (database available)")
+except Exception as e:
+    logger.warning(f"DB routers not loaded: {e}. Only /api/search is available.")
 
 
 @app.get("/")
